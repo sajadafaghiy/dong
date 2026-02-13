@@ -1,0 +1,195 @@
+﻿@page "/"
+
+<PageTitle>Bill Splitter!</PageTitle>
+
+<h1>Bill Splitter!</h1>
+
+<button class="btn btn-primary" @onclick="AddPerson">Add Person</button>
+
+@foreach (var (p, index) in people.Select((x, i) => (x, i)))
+{
+    <div class="row">
+        <div class="input-group mt-2">
+            <div class="form-floating">
+                <input type="text" @bind="p.Name" id="person" class="form-control" placeholder="Person" aria-label="Person">
+                <label for="person">Person</label>
+            </div>
+            <div class="form-floating">
+                <input type="number" @bind="p.Cost" id="Paid" class="form-control" placeholder="Amount" aria-label="Amount" step="0.01">
+                <label for="paid">Paid</label>
+            </div>
+            <button type="button" @onclick="() => Remove(index)" class="btn btn-danger" id="button-addon">Remove</button>
+        </div>
+    </div>
+}
+
+<button type="button" @onclick="Calculate" class="btn btn-success mt-2">Calculate</button>
+
+@if (calculationResult is not null)
+{
+    <h3>Summary</h3>
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th class="text-center" scope="col">Total Cost</th>
+                <th class="text-center" scope="col">Average Per Person</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center">@calculationResult.TotalCost</td>
+                <td class="text-center">@calculationResult.Average</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>Individual Breakdown</h3>
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th class="text-center" scope="col">Person</th>
+                <th class="text-center" scope="col">Paid</th>
+                <th class="text-center" scope="col">Status</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var breakdown in calculationResult.Breakdowns)
+            {
+                <tr>
+                    <td class="text-center">@breakdown.Name</td>
+                    <td class="text-center">@breakdown.Paid</td>
+                    <td class="text-center">@breakdown.Status</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <h3>Payments</h3>
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th class="text-center" scope="col">Who</th>
+                <th class="text-center" scope="col">Whom</th>
+                <th class="text-center" scope="col">Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var payment in calculationResult.Payments)
+            {
+                <tr>
+                    <td class="text-center">@payment.Who</td>
+                    <td class="text-center">@payment.Whom</td>
+                    <td class="text-center">@payment.Amount</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private List<Person> people = new();
+    private CalculationResult? calculationResult;
+
+    protected override void OnInitialized()
+    {
+        AddPerson();
+        AddPerson();
+    }
+
+    void AddPerson()
+    {
+        people.Add(new Person { Name = $"Person {people.Count + 1}", Cost = 0 });
+    }
+
+    void Remove(int index)
+    {
+        if (people.Count > 2)
+        {
+            people.RemoveAt(index);
+        }
+    }
+
+    void Calculate()
+    {
+        if (people.Count < 2)
+        {
+            return;
+        }
+
+        decimal total = people.Sum(p => p.Cost);
+        decimal average = people.Average(p => p.Cost);
+
+        // 1) Compute balances
+        var balances = people.Select(p => p.Cost - average).ToList();
+
+        // Build workers
+        var debtors = new Queue<(int index, decimal amount)>();
+        var creditors = new Queue<(int index, decimal amount)>();
+
+        for (int i = 0; i < balances.Count; i++)
+        {
+            if (balances[i] < 0)
+            {
+                debtors.Enqueue((i, -balances[i])); // Store as positive
+            }
+            else if (balances[i] > 0)
+            {
+                creditors.Enqueue((i, balances[i]));
+            }
+        }
+
+        List<Payment> payments = new();
+
+        // 2) Greedy minimal-settlement loop
+        while (debtors.Count > 0 && creditors.Count > 0)
+        {
+            var (debtorIndex, debtorAmount) = debtors.Dequeue();
+            var (creditorIndex, creditorAmount) = creditors.Dequeue();
+
+            var payment = Math.Min(debtorAmount, creditorAmount);
+
+            payments.Add(new()
+            {
+                Who = people[debtorIndex].Name,
+                Whom = people[creditorIndex].Name,
+                Amount = Format(payment)
+            });
+
+            decimal remainingDebtor = debtorAmount - payment;
+            decimal remainingCreditor = creditorAmount - payment;
+
+            if (remainingDebtor > 0)
+            {
+                debtors.Enqueue((debtorIndex, remainingDebtor));
+            }
+
+            if (remainingCreditor > 0)
+            {
+                creditors.Enqueue((creditorIndex, remainingCreditor));
+            }
+        }
+
+        // Build breakdown
+        var breakdowns = people.Select(p =>
+        {
+            var diff = p.Cost - average;
+            var status = diff >= 0 ? "owes nothing (paid extra)" : "needs to pay";
+            return new Breakdown
+            {
+                Name = p.Name,
+                Paid = $"{Format(p.Cost)}",
+                Status = $"{status} {Format(Math.Abs(diff))}"
+            };
+        }).ToList();
+
+        calculationResult = new CalculationResult
+        {
+            TotalCost = Format(total),
+            Average = Format(average),
+            Breakdowns = breakdowns,
+            Payments = payments
+        };
+    }
+
+    string Format(decimal val) => val.ToString("N2");
+}
